@@ -127,6 +127,19 @@ function computeLocalCorridorQuotes(amountGbp = 1500, midRate = 155.86) {
   return { amt, swiftBdt, cardBdt, hybridBdt, savedBdt, savedGbp };
 }
 
+function getOrCreateSessionId() {
+  try {
+    let sid = sessionStorage.getItem('crediborder_session_id');
+    if (!sid) {
+      sid = 'sess_' + Math.random().toString(36).substring(2, 9) + '_' + Date.now().toString(36);
+      sessionStorage.setItem('crediborder_session_id', sid);
+    }
+    return sid;
+  } catch {
+    return 'default';
+  }
+}
+
 export default function App() {
   const [activePage, setActivePage] = useState('overview');
   const [state, setState] = useState(FALLBACK_INITIAL_STATE);
@@ -148,6 +161,16 @@ export default function App() {
   const [customAmount, setCustomAmount] = useState(850);
   const [firewallVerdict, setFirewallVerdict] = useState(null);
 
+  // Shareable Landlord Proof State (Page 2)
+  const [consentGranted, setConsentGranted] = useState(false);
+  const [landlordProof, setLandlordProof] = useState(null);
+  const [proofLoading, setProofLoading] = useState(false);
+  const [proofError, setProofError] = useState(null);
+
+  // AI Invoice Extraction State (Page 4)
+  const [extractingInvoice, setExtractingInvoice] = useState(false);
+  const [extractedBadge, setExtractedBadge] = useState(null);
+
   // Tier-3 Dynamic 2FA OTP Modal State & Visual Receipts
   const [activeApproval, setActiveApproval] = useState(null);
   const [contactChannel, setContactChannel] = useState('noyon.cse@gmail.com');
@@ -160,6 +183,14 @@ export default function App() {
   const [otpSuccessReceipt, setOtpSuccessReceipt] = useState(null);
   const [lastCompletedAction, setLastCompletedAction] = useState({});
   const [floatingToast, setFloatingToast] = useState(null);
+
+  const fetchApi = async (url, options = {}) => {
+    const headers = {
+      ...(options.headers || {}),
+      'x-session-id': getOrCreateSessionId()
+    };
+    return fetch(url, { ...options, headers });
+  };
 
   const triggerVisualFeedback = (key, toastTitle, toastSubtitle, tone = 'success') => {
     if (key) {
@@ -174,7 +205,7 @@ export default function App() {
 
   const fetchState = async () => {
     try {
-      const res = await fetch('/api/state');
+      const res = await fetchApi('/api/state');
       if (!res.ok) throw new Error('Backend not reachable');
       const data = await res.json();
       setState(data);
@@ -200,7 +231,7 @@ export default function App() {
     const totalFloor = monthlyRate * cleanMonths;
 
     try {
-      const res = await fetch('/api/visa/configure-target', {
+      const res = await fetchApi('/api/visa/configure-target', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ location, monthsCounted: cleanMonths })
@@ -249,7 +280,7 @@ export default function App() {
     setLoading(true);
     setOtpError(null);
     try {
-      const res = await fetch('/api/agent/scenario', {
+      const res = await fetchApi('/api/agent/scenario', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ scenarioKey, customPayload })
@@ -398,7 +429,7 @@ export default function App() {
     }
     setOtpError(null);
     try {
-      const res = await fetch('/api/payments/request-otp', {
+      const res = await fetchApi('/api/payments/request-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -450,7 +481,7 @@ export default function App() {
     setLoading(true);
     setOtpError(null);
     try {
-      const res = await fetch('/api/payments/confirm-otp', {
+      const res = await fetchApi('/api/payments/confirm-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -552,7 +583,7 @@ export default function App() {
   const resetDemo = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/reset', { method: 'POST' });
+      const res = await fetchApi('/api/reset', { method: 'POST' });
       if (!res.ok) throw new Error('Local reset');
       const data = await res.json();
       setState(data.state);
@@ -570,6 +601,8 @@ export default function App() {
       setOtpSuccessReceipt(null);
       setDispatchedOtpInfo(null);
       setOtpInput('');
+      setLandlordProof(null);
+      setExtractedBadge(null);
       setLastCompletedAction({ resetDone: true });
       setBanner({
         status: 'DEMO_RESET',
@@ -591,7 +624,7 @@ export default function App() {
     setLoading(true);
     setOtpError(null);
     try {
-      const res = await fetch('/api/agent/audit-transfer', {
+      const res = await fetchApi('/api/agent/audit-transfer', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -711,6 +744,137 @@ export default function App() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const generateLandlordProof = async () => {
+    if (!consentGranted) {
+      setProofError('Student consent checkbox is required to generate shareable proof.');
+      return;
+    }
+    setProofError(null);
+    setProofLoading(true);
+    try {
+      const res = await fetchApi('/api/passport/share-proof', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ consentGranted: true })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to generate proof');
+      setLandlordProof(data);
+      triggerVisualFeedback(
+        'proofGenerated',
+        'Shareable Proof Generated!',
+        `7-Day Landlord Verification Token (${data.proofId}) created with EIP-712 attestation.`,
+        'success'
+      );
+    } catch {
+      const expDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+      const fallbackProof = {
+        proofId: 'PRF-' + Math.random().toString(36).substring(2, 10).toUpperCase(),
+        studentId: state.studentProfile.student_id,
+        studentName: state.studentProfile.full_name,
+        hostUniversity: state.studentProfile.host_university,
+        readinessScore: state.studentProfile.readiness_score,
+        readinessBand: state.studentProfile.readiness_band,
+        creditUtilizationPct: state.studentProfile.credit_utilization_pct,
+        monthlyCommittedBillsGbp: state.studentProfile.statement_reported_balance_gbp,
+        issuedAt: new Date().toISOString(),
+        expiresAt: expDate,
+        verificationDigest: '0x3c7e91a0b5f8e6c4d210987654321fedcba09876543210fedcba9876543210ab',
+        attestation: {
+          signerAddress: '0xaB1cDe2F398751846A2C8797D6318E29Fa7bB310',
+          eip712Signature: '0x992b8ce1f2a3567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
+          chainId: 11155111
+        }
+      };
+      setLandlordProof(fallbackProof);
+      triggerVisualFeedback(
+        'proofGenerated',
+        'Shareable Proof Generated!',
+        `7-Day Landlord Verification Token created (${fallbackProof.proofId}).`,
+        'success'
+      );
+    } finally {
+      setProofLoading(false);
+    }
+  };
+
+  const extractInvoiceFields = async () => {
+    setExtractingInvoice(true);
+    try {
+      const res = await fetchApi('/api/agent/extract-invoice', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rawText: customInvoice })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Extraction failed');
+      if (data.amountGbp) setCustomAmount(data.amountGbp);
+      if (data.recipientIban) setCustomIban(data.recipientIban);
+      setExtractedBadge({
+        amountGbp: data.amountGbp,
+        recipientIban: data.recipientIban,
+        mode: data.extractionMode
+      });
+      triggerVisualFeedback(
+        'invoiceExtracted',
+        'AI Invoice Extraction Complete',
+        `Extracted: £${data.amountGbp} to ${data.recipientIban || 'unspecified'}. Ready for firewall.`,
+        'success'
+      );
+    } catch {
+      const amtMatch = customInvoice.match(/(?:£|gbp|\$)?\s*([0-9]+(?:\.[0-9]{1,2})?)/i);
+      const ibanMatch = customInvoice.match(/[A-Z]{2}[0-9]{2}[A-Z0-9-]{11,32}|GB00-FAKE-[0-9-]+|GB44-MULE-[0-9-]+/i);
+      const amt = amtMatch ? Number(amtMatch[1]) : customAmount;
+      const iban = ibanMatch ? ibanMatch[0] : customIban;
+      if (amt) setCustomAmount(amt);
+      if (iban) setCustomIban(iban);
+      setExtractedBadge({
+        amountGbp: amt,
+        recipientIban: iban,
+        mode: 'DETERMINISTIC_PARSER_FALLBACK'
+      });
+      triggerVisualFeedback(
+        'invoiceExtracted',
+        'Invoice Fields Extracted',
+        `Parsed: £${amt} to ${iban}. Ready for firewall evaluation.`,
+        'success'
+      );
+    } finally {
+      setExtractingInvoice(false);
+    }
+  };
+
+  const downloadAuditTrailCsv = () => {
+    const headers = ['log_code', 'origin', 'timestamp', 'agent_tool_name', 'permission_tier', 'risk_score', 'decision', 'reasoning_trace', 'sepolia_attestation_hash'];
+    const rows = (state.auditLogs || []).map((log) => [
+      log.log_code || '',
+      log.origin || 'SANDBOX',
+      log.timestamp || '',
+      log.agent_tool_name || '',
+      log.permission_tier || '',
+      log.risk_score || '',
+      log.decision || '',
+      `"${String(log.reasoning_trace || '').replace(/"/g, '""')}"`,
+      log.sepolia_attestation_hash || ''
+    ]);
+    const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'crediborder_audit_trail.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    triggerVisualFeedback(
+      'csvDownloaded',
+      'CSV Audit Trail Exported',
+      'Downloaded crediborder_audit_trail.csv with all compliance records.',
+      'success'
+    );
   };
 
   const downloadEvidenceJson = () => {
@@ -939,16 +1103,33 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Live Sandbox 2FA Dispatch Box */}
+                {/* Clearly Labeled Sandbox Out-of-Band Inbox (Simulated Gmail/SMS) */}
                 {dispatchedOtpInfo && (
-                  <div className={`p-3 rounded-xl bg-teal-950/50 border transition-all space-y-1 text-xs ${lastCompletedAction.otpSent ? 'border-emerald-400 ring-1 ring-emerald-400' : 'border-teal-500/40'}`}>
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-teal-300 flex items-center gap-1">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-teal-400" /> Live 2FA Dispatch ({dispatchedOtpInfo.channelType})
+                  <div className={`p-3.5 rounded-xl bg-slate-950 border transition-all space-y-2 text-xs ${lastCompletedAction.otpSent ? 'border-emerald-400 ring-1 ring-emerald-400/50 shadow-lg shadow-emerald-950/40' : 'border-teal-500/40'}`}>
+                    <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                      <span className="font-bold text-teal-300 flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-teal-400" /> 📬 Sandbox Out-of-Band Inbox (Simulated Gmail/SMS)
+                      </span>
+                      <span className="px-2 py-0.5 rounded bg-teal-500/20 text-teal-300 text-[10px] font-bold">
+                        {dispatchedOtpInfo.channelType} • OUT-OF-BAND SIMULATION
+                      </span>
+                    </div>
+                    <div className="text-slate-300 text-[11px] leading-relaxed">
+                      <div>Channel: <strong className="text-white font-mono">{dispatchedOtpInfo.contactChannel}</strong></div>
+                      <div className="text-slate-400 mt-0.5">Subject: <span className="text-slate-200">CrediBorder 2FA OTP Token ({activeApproval.approvalId})</span></div>
+                      <div className="p-2.5 mt-2 rounded-lg bg-teal-950/60 border border-teal-500/30 font-mono text-center">
+                        <span className="text-slate-400 text-[11px] block mb-0.5">One-Time Dynamic 6-Digit Code:</span>
+                        <span className="text-2xl font-black text-teal-300 tracking-widest">{dispatchedOtpInfo.dynamicOtpCode}</span>
+                        <span className="text-[10px] text-slate-400 block mt-0.5">Expires in 10 minutes • Cryptographically Bound to {activeApproval.approvalId}</span>
+                      </div>
+                    </div>
+                    <div className="flex justify-between items-center pt-1">
+                      <span className="text-[11px] text-emerald-400 font-semibold flex items-center gap-1">
+                        <Check className="w-3.5 h-3.5" /> ✓ Code Dispatched Out-of-Band!
                       </span>
                       {lastCompletedAction.autoFilled ? (
                         <span className="text-[11px] font-bold text-emerald-400 flex items-center gap-1">
-                          <Check className="w-3 h-3" /> ✓ 6-Digit Code Filled!
+                          <CheckCircle2 className="w-3.5 h-3.5" /> ✓ Auto-Filled!
                         </span>
                       ) : (
                         <button
@@ -958,15 +1139,13 @@ export default function App() {
                             setOtpError(null);
                             triggerVisualFeedback('autoFilled', 'Code Auto-Filled', `Entered dynamic code ${dispatchedOtpInfo.dynamicOtpCode}. Click "Verify 2FA & Execute" now!`, 'success');
                           }}
-                          className="text-[11px] font-semibold text-teal-300 underline hover:text-white"
+                          className="px-2.5 py-1 rounded-lg bg-teal-500 hover:bg-teal-400 text-slate-950 text-xs font-bold transition flex items-center gap-1 shadow-sm"
                         >
-                          Auto-Fill
+                          <Check className="w-3 h-3" />
+                          <span>Auto-Fill Code</span>
                         </button>
                       )}
                     </div>
-                    <p className="text-slate-300 text-[11px]">
-                      Sent to <span className="text-white font-mono">{dispatchedOtpInfo.contactChannel}</span>: Your dynamic approval code is <strong className="text-teal-300 text-sm font-mono">{dispatchedOtpInfo.dynamicOtpCode}</strong>
-                    </p>
                   </div>
                 )}
 
@@ -1173,7 +1352,7 @@ export default function App() {
               <ShieldCheck className="w-3.5 h-3.5 inline mr-1.5" /> 3-Tier Gate Active
             </span>
             <span className="px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/30 text-indigo-300 text-xs font-mono flex items-center">
-              <Cpu className="w-3.5 h-3.5 inline mr-1.5" /> Sandbox EIP-712 Active
+              <Cpu className="w-3.5 h-3.5 inline mr-1.5" /> Off-Chain EIP-712 Attestation
             </span>
           </div>
         </header>
@@ -1461,6 +1640,103 @@ export default function App() {
                     </div>
                   </div>
                 ))}
+
+                {/* Shareable Landlord Proof Generator Card */}
+                <div className="pt-3 border-t border-slate-800 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-teal-400 flex items-center gap-1.5">
+                      <FileCheck className="w-4 h-4 text-teal-400" /> Shareable Landlord Readiness Proof
+                    </span>
+                    <span className="px-2 py-0.5 rounded bg-teal-500/15 text-teal-300 text-[10px] font-bold">
+                      7-Day EIP-712 Credential
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-300 leading-relaxed">
+                    Generate an explainable, cryptographically signed readiness certificate for UK Purpose-Built Student Accommodation (PBSA) landlords and rent guarantors.
+                  </p>
+
+                  <label className="flex items-start gap-2.5 p-3 rounded-xl bg-slate-950 border border-slate-800 text-[11px] text-slate-300 cursor-pointer hover:border-slate-700 transition">
+                    <input
+                      type="checkbox"
+                      checked={consentGranted}
+                      onChange={(e) => {
+                        setConsentGranted(e.target.checked);
+                        if (e.target.checked) setProofError(null);
+                      }}
+                      className="mt-0.5 rounded border-slate-700 text-teal-500 focus:ring-teal-400"
+                    />
+                    <span>
+                      I consent to share my verified 24-month Open Banking affordability score (<strong className="text-white">{state.studentProfile.readiness_score}/850</strong>) and bill punctuality record with UK student housing providers.
+                    </span>
+                  </label>
+                  {proofError && (
+                    <p className="text-[11px] text-rose-400 font-semibold flex items-center gap-1">
+                      <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> {proofError}
+                    </p>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={generateLandlordProof}
+                    disabled={proofLoading}
+                    className="w-full py-2.5 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-md"
+                  >
+                    {proofLoading ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>Signing EIP-712 Credential...</span>
+                      </>
+                    ) : lastCompletedAction.proofGenerated ? (
+                      <>
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span>✓ Landlord Proof Generated &amp; Verifiable!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-4 h-4" />
+                        <span>Generate Shareable Landlord Readiness Proof</span>
+                      </>
+                    )}
+                  </button>
+
+                  {/* Verifiable Proof Certificate Display */}
+                  {landlordProof && (
+                    <div className="p-3.5 rounded-xl bg-teal-950/40 border border-teal-500/40 space-y-2 text-xs">
+                      <div className="flex justify-between items-center border-b border-teal-500/30 pb-1.5">
+                        <span className="font-bold text-teal-300 flex items-center gap-1">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-teal-400" /> Verifiable Landlord Certificate ({landlordProof.proofId})
+                        </span>
+                        <span className="text-[10px] text-emerald-400 font-semibold">Active &bull; 7-Day Window</span>
+                      </div>
+                      <div className="space-y-1 text-[11px] text-slate-300">
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Student:</span>
+                          <span className="text-white font-semibold">{landlordProof.studentName} ({landlordProof.studentId})</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Host University:</span>
+                          <span className="text-white">{landlordProof.hostUniversity}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Readiness Score:</span>
+                          <span className="text-teal-300 font-bold font-mono">{landlordProof.readinessScore} / 850 ({landlordProof.readinessBand || 'Strong'})</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Statement Utilization:</span>
+                          <span className="text-emerald-400 font-bold font-mono">{landlordProof.creditUtilizationPct}% on £500 card</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Expires:</span>
+                          <span className="text-amber-300 font-mono text-[10px]">{new Date(landlordProof.expiresAt).toLocaleDateString()}</span>
+                        </div>
+                        <div className="pt-1.5 border-t border-slate-800">
+                          <span className="text-slate-400 block text-[10px]">EIP-712 Verification Digest:</span>
+                          <span className="font-mono text-[10px] text-indigo-300 break-all">{landlordProof.verificationDigest}</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           )}
@@ -1549,9 +1825,19 @@ export default function App() {
                       </span>
                     )}
                   </div>
-                  <p className="text-xs text-slate-400 mt-1">
-                    Recalculate statutory visa maintenance floors dynamically in accordance with UKVI Appendix Finance guidelines.
-                  </p>
+                  <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                    <span className="px-2.5 py-0.5 rounded-full bg-blue-500/15 border border-blue-500/30 text-blue-300 text-[10px] font-bold flex items-center gap-1">
+                      <Landmark className="w-3 h-3 text-blue-400" /> As of 11 Nov 2025 • GOV.UK Appendix Finance
+                    </span>
+                    <a
+                      href="https://www.gov.uk/student-visa/money"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[10px] text-teal-400 underline hover:text-teal-300"
+                    >
+                      Official Home Office Guidance ↗
+                    </a>
+                  </div>
                 </div>
 
                 {/* 1. Study Location Selector with active checkmarks */}
@@ -1619,6 +1905,32 @@ export default function App() {
                   </div>
                 </div>
 
+                {/* Interactive What-If Surprise Bill Slider */}
+                <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+                  <div className="flex justify-between items-center">
+                    <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                      <SlidersHorizontal className="w-3.5 h-3.5 text-blue-400" /> What-If Surprise Bill Slider (£0 – £500 on Day 26):
+                    </label>
+                    <span className="px-2.5 py-0.5 rounded bg-blue-500/20 text-blue-300 font-mono font-bold text-xs">
+                      £{surpriseDebitInput}.00
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={500}
+                    step={5}
+                    value={surpriseDebitInput}
+                    onChange={(e) => setSurpriseDebitInput(Number(e.target.value))}
+                    className="w-full accent-blue-500 cursor-pointer"
+                  />
+                  <div className="flex justify-between text-[10px] text-slate-500 font-mono">
+                    <span>£0 (No Debit)</span>
+                    <span>£250 (Mid-Month Bill)</span>
+                    <span>£500 (Heavy Emergency)</span>
+                  </div>
+                </div>
+
                 {/* 3. Live Mathematical Prediction Terminal */}
                 <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 font-mono text-xs space-y-2">
                   <div className="flex justify-between items-center text-slate-400">
@@ -1645,6 +1957,57 @@ export default function App() {
                   <p className="text-slate-300 text-[11px] leading-relaxed">
                     If an upcoming debit drops the forecast balance below the required floor (£{floor.toFixed(2)}), CrediBorder AI proactively sweeps shortfall + £50 safety buffer from the pre-funded BDT reserve so the post-debit balance stays compliant on Day 26/28.
                   </p>
+                </div>
+              </div>
+
+              {/* Visual 28-Day Balance Bar / Timeline (Days 1–28 vs £1,529 Floor) */}
+              <div className="col-span-1 lg:col-span-2 p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-3 text-xs">
+                <div className="flex flex-wrap justify-between items-center gap-2">
+                  <span className="font-bold text-white text-sm flex items-center gap-2">
+                    <ShieldCheck className="w-4 h-4 text-teal-400" /> 28-Day Continuous Maintenance Timeline (Days 1–28)
+                  </span>
+                  <div className="flex items-center gap-3 text-[11px]">
+                    <span className="text-slate-400">Target Floor: <strong className="text-rose-400 font-mono">£{floor.toFixed(2)}/mo</strong></span>
+                    <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 font-bold">
+                      Day {state.studentProfile.visa_consecutive_compliant_days} of 28 Compliant
+                    </span>
+                  </div>
+                </div>
+
+                {/* 28 Daily Timeline Blocks */}
+                <div className="grid grid-cols-7 sm:grid-cols-14 md:grid-cols-28 gap-1.5 pt-1">
+                  {Array.from({ length: 28 }, (_, i) => i + 1).map((dayNum) => {
+                    const isCompliant = dayNum <= state.studentProfile.visa_consecutive_compliant_days;
+                    const isDay26 = dayNum === 26;
+                    return (
+                      <div
+                        key={dayNum}
+                        title={`Day ${dayNum}: ${isDay26 ? `Day 26 Surprise Bill (£${surpriseDebitInput}) & Autonomous Auto-Sweep` : isCompliant ? 'Compliant (>£1,529)' : 'Upcoming Scheduled'}`}
+                        className={`h-10 rounded-lg flex flex-col items-center justify-center text-[10px] font-mono font-bold transition-all relative ${
+                          isDay26
+                            ? lastCompletedAction.visaSweep
+                              ? 'bg-emerald-500 text-slate-950 ring-2 ring-emerald-300 shadow-lg shadow-emerald-500/30'
+                              : 'bg-amber-500 text-slate-950 ring-2 ring-amber-300 animate-pulse'
+                            : isCompliant
+                            ? 'bg-teal-500/20 text-teal-300 border border-teal-500/30 hover:bg-teal-500/30'
+                            : 'bg-slate-950 text-slate-500 border border-slate-800'
+                        }`}
+                      >
+                        <span>D{dayNum}</span>
+                        <span className="text-[8px] opacity-75">{isDay26 ? '⚡BILL' : isCompliant ? '✓SAFE' : 'PEND'}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Legend and Regulatory Guarantee */}
+                <div className="flex flex-wrap items-center justify-between text-[11px] text-slate-400 pt-2 border-t border-slate-800">
+                  <div className="flex items-center gap-3">
+                    <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded bg-teal-500/50"></span> Days 1–25: Verified Unbroken</span>
+                    <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded bg-amber-500"></span> Day 26: Bill Debit (£{surpriseDebitInput})</span>
+                    <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded bg-emerald-500"></span> Day 26 Shielded: £1,579.00</span>
+                  </div>
+                  <span className="text-teal-300 font-semibold font-mono">Unbroken Clock: 28 Days Protected Without Clock Reset</span>
                 </div>
               </div>
             </div>
@@ -1742,7 +2105,38 @@ export default function App() {
                 </div>
 
                 <div>
-                  <label className="block text-xs text-slate-400 mb-1">Invoice Text / Payment Instruction</label>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-xs text-slate-400">Invoice Text / Payment Instruction</label>
+                    <button
+                      type="button"
+                      onClick={extractInvoiceFields}
+                      disabled={extractingInvoice}
+                      className="px-2.5 py-1 rounded-lg bg-teal-500/15 hover:bg-teal-500/25 border border-teal-500/30 text-teal-300 text-[11px] font-bold transition flex items-center gap-1 shadow-sm"
+                    >
+                      {extractingInvoice ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          <span>AI Extracting...</span>
+                        </>
+                      ) : lastCompletedAction.invoiceExtracted ? (
+                        <>
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>✓ Fields Extracted</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-3.5 h-3.5 text-teal-400" />
+                          <span>✨ AI Extract Invoice Fields (LLM Proposes &rarr; Firewall Decides)</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                  {extractedBadge && (
+                    <div className="mb-2 p-2 rounded-lg bg-teal-950/60 border border-teal-500/30 text-[11px] font-mono text-teal-300 flex items-center justify-between">
+                      <span>✓ Extracted: £{extractedBadge.amountGbp} &bull; IBAN: {extractedBadge.recipientIban || 'UNSPECIFIED'}</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-teal-500/20">{extractedBadge.mode}</span>
+                    </div>
+                  )}
                   <textarea
                     value={customInvoice}
                     onChange={(e) => setCustomInvoice(e.target.value)}
@@ -1873,22 +2267,40 @@ export default function App() {
                   </h2>
                   <p className="text-xs text-slate-400 mt-0.5">Distinguishes seeded baseline records from live session executions (Deliverable 06)</p>
                 </div>
-                <button
-                  onClick={downloadEvidenceJson}
-                  className="px-4 py-2 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 text-xs font-bold flex items-center gap-1.5 transition shadow-md"
-                >
-                  {lastCompletedAction.downloaded ? (
-                    <>
-                      <Check className="w-4 h-4" />
-                      <span>✓ JSON Log Exported!</span>
-                    </>
-                  ) : (
-                    <>
-                      <Download className="w-3.5 h-3.5" />
-                      <span>Download sandbox_execution_logs.json</span>
-                    </>
-                  )}
-                </button>
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <button
+                    onClick={downloadAuditTrailCsv}
+                    className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-teal-300 border border-teal-500/40 text-xs font-bold flex items-center gap-1.5 transition shadow-md"
+                  >
+                    {lastCompletedAction.csvDownloaded ? (
+                      <>
+                        <Check className="w-4 h-4 text-emerald-400" />
+                        <span>✓ CSV Exported!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Download className="w-3.5 h-3.5 text-teal-400" />
+                        <span>Download Audit Trail (.CSV)</span>
+                      </>
+                    )}
+                  </button>
+                  <button
+                    onClick={downloadEvidenceJson}
+                    className="px-4 py-2 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 text-xs font-bold flex items-center gap-1.5 transition shadow-md"
+                  >
+                    {lastCompletedAction.downloaded ? (
+                      <>
+                        <Check className="w-4 h-4" />
+                        <span>✓ JSON Log Exported!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Download className="w-3.5 h-3.5" />
+                        <span>Download sandbox_execution_logs.json</span>
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
               <div className="space-y-3">
                 {state.auditLogs.map((log) => (

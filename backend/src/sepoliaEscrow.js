@@ -1,19 +1,38 @@
 // ============================================================================
-// CREDIBORDER AI — EIP-712 CRYPTOGRAPHIC ATTESTATION & SEPOLIA ESCROW MODULE
-// Team Retro Engineers (Sheikh Jayed Ahmed Noyon, Fahmiduzzaman, Shadman Sakib)
+// CREDIBORDER AI — REAL ETHERS V6 EIP-712 CRYPTOGRAPHIC ATTESTATION & SEPOLIA ESCROW
+// Team Retro Engineers: Sheikh Jayed Ahmed Noyon, Fahmiduzzaman, Shadman Sakib
+// Sylhet Engineering College (SEC), Bangladesh
 // ============================================================================
+import { ethers } from 'ethers';
 import crypto from 'crypto';
 
-// Deterministic secp256k1 keypair for zero-dependency cryptographic signing & verification
-const { privateKey: SANDBOX_PRIV_KEY, publicKey: SANDBOX_PUB_KEY } = crypto.generateKeyPairSync('ec', {
-  namedCurve: 'secp256k1'
-});
+// Deterministic institutional signer wallet derived from a cryptographic seed
+// Ensures stable secp256k1 public key and verifiable EIP-712 signatures across server restarts
+const INSTITUTIONAL_SEED = crypto
+  .createHash('sha256')
+  .update('CREDIBORDER_AI_SEPOLIA_ESCROW_SIGNER_V2')
+  .digest('hex');
 
-const EIP712_DOMAIN = {
-  name: 'CrediBorderAI_StudentEscrow',
+const SIGNER_PRIVATE_KEY = process.env.SEPOLIA_PRIVATE_KEY || `0x${INSTITUTIONAL_SEED}`;
+export const institutionalWallet = new ethers.Wallet(SIGNER_PRIVATE_KEY);
+
+export const EIP712_DOMAIN = {
+  name: 'CrediBorderAIEscrow',
   version: '2.0',
-  chainId: 11155111, // Ethereum Sepolia Testnet Chain ID
+  chainId: 11155111, // Ethereum Sepolia Testnet
   verifyingContract: '0x71C95911E9a5D330f4D621842EC243EE1343292e'
+};
+
+export const EIP712_TYPES = {
+  EscrowAttestation: [
+    { name: 'studentId', type: 'string' },
+    { name: 'actionType', type: 'string' },
+    { name: 'amountGbp', type: 'string' },
+    { name: 'recipientIban', type: 'string' },
+    { name: 'permissionTier', type: 'uint8' },
+    { name: 'approvalId', type: 'string' },
+    { name: 'timestamp', type: 'string' }
+  ]
 };
 
 export async function createSepoliaEscrowAttestation({
@@ -22,42 +41,41 @@ export async function createSepoliaEscrowAttestation({
   amountGbp,
   recipientIban,
   permissionTier,
-  approvalId = null
+  approvalId = null,
+  timestamp = new Date().toISOString()
 }) {
-  const timestamp = new Date().toISOString();
-  const structuredMessage = {
-    domain: EIP712_DOMAIN,
-    message: {
-      studentId: String(studentId),
-      actionType: String(actionType),
-      amountGbp: Number(Number(amountGbp || 0).toFixed(2)),
-      recipientIban: String(recipientIban || 'INTERNAL'),
-      permissionTier: Number(permissionTier),
-      approvalId: approvalId ? String(approvalId) : 'NONE',
-      timestamp
-    }
+  const value = {
+    studentId: String(studentId || 'SEC-2026-NOYON'),
+    actionType: String(actionType || 'CUSTOM_EVALUATION'),
+    amountGbp: Number(Number(amountGbp || 0).toFixed(2)).toString(),
+    recipientIban: String(recipientIban || 'INTERNAL'),
+    permissionTier: Number(permissionTier || 2),
+    approvalId: approvalId ? String(approvalId) : 'NONE',
+    timestamp
   };
 
-  const canonicalPayload = JSON.stringify(structuredMessage);
-  const payloadDigestHex = '0x' + crypto.createHash('sha256').update(canonicalPayload).digest('hex');
+  const canonicalPayload = JSON.stringify(value);
+  const attestationDigest = ethers.TypedDataEncoder.hash(EIP712_DOMAIN, EIP712_TYPES, value);
+  const eip712Signature = await institutionalWallet.signTypedData(EIP712_DOMAIN, EIP712_TYPES, value);
 
-  // Sign the canonical EIP-712 structured payload using secp256k1 ECDSA
-  const signatureBuffer = crypto.sign('sha256', Buffer.from(canonicalPayload, 'utf8'), SANDBOX_PRIV_KEY);
-  const eip712Signature = '0x' + signatureBuffer.toString('hex');
-
-  const isLiveRpcConfigured = Boolean(process.env.SEPOLIA_RPC_URL && process.env.SEPOLIA_PRIVATE_KEY);
+  const isLiveRpc = Boolean(process.env.SEPOLIA_RPC_URL && process.env.SEPOLIA_PRIVATE_KEY);
+  const attestationMode = isLiveRpc ? 'LIVE_SEPOLIA_RPC' : 'OFFCHAIN_EIP712_TYPED_DATA_ATTESTATION';
 
   return {
-    mode: isLiveRpcConfigured ? 'LIVE_SEPOLIA_RPC_CONFIGURED' : 'OFFCHAIN_EIP712_SANDBOX_ATTESTATION',
+    attestationDigest,
+    txHash: attestationDigest, // Retained for backward-compatibility with UI badges
+    eip712Signature,
+    signerAddress: institutionalWallet.address,
+    chainId: 11155111,
+    attestationMode,
+    mode: attestationMode,
+    canonicalPayload,
+    value,
     network: 'Ethereum Sepolia Testnet (Chain ID: 11155111)',
     escrowContract: EIP712_DOMAIN.verifyingContract,
-    attestationDigest: payloadDigestHex,
-    txHash: payloadDigestHex, // Retained for backward compatibility with existing UI badges
-    eip712Signature,
-    signerAlgorithm: 'secp256k1-ECDSA-SHA256 (EIP-712 Structured Payload)',
-    explorerUrl: isLiveRpcConfigured ? `https://sepolia.etherscan.io/tx/${payloadDigestHex}` : null,
-    timestamp,
-    canonicalPayload
+    signerAlgorithm: 'secp256k1-ECDSA EIP-712 Typed Data',
+    explorerUrl: isLiveRpc ? `https://sepolia.etherscan.io/tx/${attestationDigest}` : null,
+    timestamp
   };
 }
 
@@ -66,13 +84,15 @@ export function verifyEscrowAttestation(attestation) {
     return false;
   }
   try {
-    const sigBuf = Buffer.from(attestation.eip712Signature.replace(/^0x/, ''), 'hex');
-    return crypto.verify(
-      'sha256',
-      Buffer.from(attestation.canonicalPayload, 'utf8'),
-      SANDBOX_PUB_KEY,
-      sigBuf
+    const parsedValue = JSON.parse(attestation.canonicalPayload);
+    const recoveredAddress = ethers.verifyTypedData(
+      EIP712_DOMAIN,
+      EIP712_TYPES,
+      parsedValue,
+      attestation.eip712Signature
     );
+    const expectedSigner = attestation.signerAddress || institutionalWallet.address;
+    return recoveredAddress.toLowerCase() === expectedSigner.toLowerCase();
   } catch {
     return false;
   }
