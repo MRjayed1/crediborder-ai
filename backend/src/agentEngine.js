@@ -460,8 +460,7 @@ export async function stageOrExecuteTransfer({
     approval_id: pendingApproval?.approvalId || null,
     reasoning_trace: tierResult.reason,
     sepolia_attestation_hash: attestation.txHash,
-    eip712_signature: attestation.eip712Signature,
-    canonicalPayload: attestation.canonicalPayload
+    eip712_signature: attestation.eip712Signature
   };
   sandboxState.auditLogs.unshift(logEntry);
 
@@ -597,8 +596,7 @@ export async function confirmStagedTransferOtp({
     approval_id: approval.approvalId,
     reasoning_trace: `Verified 2FA OTP for ${approval.approvalId}. Settled £${approval.amountGbp.toFixed(2)} (${approval.sourceBdt.toLocaleString()} BDT) to ${approval.recipientName} (${approval.recipientIban}), saving £${approval.savedGbpVsSwift.toFixed(2)} vs. SWIFT.`,
     sepolia_attestation_hash: attestation.txHash,
-    eip712_signature: attestation.eip712Signature,
-    canonicalPayload: attestation.canonicalPayload
+    eip712_signature: attestation.eip712Signature
   };
   sandboxState.auditLogs.unshift(logEntry);
 

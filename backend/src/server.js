@@ -15,7 +15,6 @@ import {
   confirmStagedTransferOtp,
   executeAgentScenario
 } from './agentEngine.js';
-import { verifyEscrowAttestation } from './sepoliaEscrow.js';
 
 dotenv.config();
 
@@ -117,21 +116,6 @@ app.post('/api/payments/confirm-otp', async (req, res) => {
     res.json(result);
   } catch (err) {
     res.status(400).json({ error: err.message, state: sandboxState });
-  }
-});
-
-app.post('/api/attestation/verify', (req, res) => {
-  try {
-    const { attestation } = req.body;
-    const isValid = verifyEscrowAttestation(attestation);
-    res.json({
-      valid: isValid,
-      algorithm: attestation?.signerAlgorithm || 'secp256k1-ECDSA-SHA256 (EIP-712 Structured Payload)',
-      attestationDigest: attestation?.attestationDigest || attestation?.sepolia_attestation_hash || attestation?.txHash,
-      timestamp: attestation?.timestamp || new Date().toISOString()
-    });
-  } catch (err) {
-    res.status(400).json({ error: err.message, valid: false });
   }
 });
 

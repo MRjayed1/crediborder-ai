@@ -1,5 +1,5 @@
 // ============================================================================
-// CREDIBORDER AI — HARDENED 10-TEST AUTOMATED VERIFICATION SUITE
+// CREDIBORDER AI — HARDENED 12-TEST AUTOMATED VERIFICATION SUITE
 // Team Retro Engineers: Sheikh Jayed Ahmed Noyon, Fahmiduzzaman, Shadman Sakib
 // ============================================================================
 import assert from 'assert';
@@ -19,7 +19,7 @@ import { verifyEscrowAttestation } from '../src/sepoliaEscrow.js';
 
 async function runAllTests() {
   console.log('====================================================================');
-  console.log(' CREDIBORDER AI — HARDENED 10-TEST SECURITY & EXECUTION SUITE');
+  console.log(' CREDIBORDER AI — HARDENED 12-TEST SECURITY & EXECUTION SUITE');
   console.log(' Team: Retro Engineers (Noyon, Fahmiduzzaman, Shadman Sakib) | SEC');
   console.log('====================================================================\n');
 
