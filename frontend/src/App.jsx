@@ -203,6 +203,20 @@ export default function App() {
     }, 5000);
   };
 
+  const close2FaModal = () => {
+    setActiveApproval(null);
+    setOtpSuccessReceipt(null);
+    setDispatchedOtpInfo(null);
+    setOtpInput('');
+    setOtpError(null);
+    setLastCompletedAction((prev) => ({
+      ...prev,
+      autoFilled: false,
+      otpSent: false,
+      otpVerified: false
+    }));
+  };
+
   const fetchState = async () => {
     try {
       const res = await fetchApi('/api/state');
@@ -291,6 +305,9 @@ export default function App() {
       if (data.pendingApproval) {
         setActiveApproval(data.pendingApproval);
         setOtpSuccessReceipt(null);
+        setDispatchedOtpInfo(null);
+        setOtpInput('');
+        setLastCompletedAction((prev) => ({ ...prev, autoFilled: false, otpSent: false, otpVerified: false }));
       }
       setBanner({
         status: data.status,
@@ -339,6 +356,9 @@ export default function App() {
         };
         setActiveApproval(approval);
         setOtpSuccessReceipt(null);
+        setDispatchedOtpInfo(null);
+        setOtpInput('');
+        setLastCompletedAction((prev) => ({ ...prev, autoFilled: false, otpSent: false, otpVerified: false }));
         setState(next);
         setBanner({
           status: 'AWAITING_HITL_OTP',
@@ -441,6 +461,7 @@ export default function App() {
       if (!res.ok) throw new Error(data.error || 'Failed to dispatch OTP');
       setDispatchedOtpInfo(data);
       setOtpInput('');
+      setLastCompletedAction((prev) => ({ ...prev, autoFilled: false, otpSent: true }));
       triggerVisualFeedback(
         'otpSent',
         '2FA OTP Dispatched!',
@@ -459,6 +480,7 @@ export default function App() {
         dynamicOtpCode: nextCode
       });
       setOtpInput('');
+      setLastCompletedAction((prev) => ({ ...prev, autoFilled: false, otpSent: true }));
       triggerVisualFeedback(
         'otpSent',
         '2FA OTP Dispatched!',
@@ -597,10 +619,7 @@ export default function App() {
       setSurpriseDebitInput(265);
     } finally {
       setFirewallVerdict(null);
-      setActiveApproval(null);
-      setOtpSuccessReceipt(null);
-      setDispatchedOtpInfo(null);
-      setOtpInput('');
+      close2FaModal();
       setLandlordProof(null);
       setExtractedBadge(null);
       setLastCompletedAction({ resetDone: true });
@@ -654,6 +673,9 @@ export default function App() {
       if (data.pendingApproval) {
         setActiveApproval(data.pendingApproval);
         setOtpSuccessReceipt(null);
+        setDispatchedOtpInfo(null);
+        setOtpInput('');
+        setLastCompletedAction((prev) => ({ ...prev, autoFilled: false, otpSent: false, otpVerified: false }));
       }
       setFirewallVerdict({
         decision: data.tierResult.decision,
@@ -733,6 +755,9 @@ export default function App() {
           attemptsRemaining: 3
         });
         setOtpSuccessReceipt(null);
+        setDispatchedOtpInfo(null);
+        setOtpInput('');
+        setLastCompletedAction((prev) => ({ ...prev, autoFilled: false, otpSent: false, otpVerified: false }));
       }
       setFirewallVerdict({ decision, tier, riskScore: risk, reason, txHash });
       triggerVisualFeedback(
@@ -992,12 +1017,7 @@ export default function App() {
                 <Lock className="w-4 h-4 text-amber-400" /> Tier-3 Bank Security 2FA Approval
               </span>
               <button
-                onClick={() => {
-                  setActiveApproval(null);
-                  setOtpSuccessReceipt(null);
-                  setDispatchedOtpInfo(null);
-                  setOtpInput('');
-                }}
+                onClick={close2FaModal}
                 className="text-slate-400 hover:text-white text-sm"
               >
                 ✕
@@ -1048,12 +1068,7 @@ export default function App() {
 
                 <button
                   type="button"
-                  onClick={() => {
-                    setOtpSuccessReceipt(null);
-                    setActiveApproval(null);
-                    setDispatchedOtpInfo(null);
-                    setOtpInput('');
-                  }}
+                  onClick={close2FaModal}
                   className="w-full py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-950/50"
                 >
                   <Check className="w-4 h-4" />
@@ -1127,24 +1142,39 @@ export default function App() {
                       <span className="text-[11px] text-emerald-400 font-semibold flex items-center gap-1">
                         <Check className="w-3.5 h-3.5" /> ✓ Code Dispatched Out-of-Band!
                       </span>
-                      {lastCompletedAction.autoFilled ? (
-                        <span className="text-[11px] font-bold text-emerald-400 flex items-center gap-1">
-                          <CheckCircle2 className="w-3.5 h-3.5" /> ✓ Auto-Filled!
-                        </span>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => {
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (dispatchedOtpInfo?.dynamicOtpCode) {
                             setOtpInput(dispatchedOtpInfo.dynamicOtpCode);
                             setOtpError(null);
-                            triggerVisualFeedback('autoFilled', 'Code Auto-Filled', `Entered dynamic code ${dispatchedOtpInfo.dynamicOtpCode}. Click "Verify 2FA & Execute" now!`, 'success');
-                          }}
-                          className="px-2.5 py-1 rounded-lg bg-teal-500 hover:bg-teal-400 text-slate-950 text-xs font-bold transition flex items-center gap-1 shadow-sm"
-                        >
-                          <Check className="w-3 h-3" />
-                          <span>Auto-Fill Code</span>
-                        </button>
-                      )}
+                            triggerVisualFeedback(
+                              'autoFilled',
+                              'Code Auto-Filled!',
+                              `Entered dynamic code ${dispatchedOtpInfo.dynamicOtpCode}. Click "Verify 2FA & Execute" now!`,
+                              'success'
+                            );
+                          }
+                        }}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow-sm cursor-pointer select-none ${
+                          otpInput === dispatchedOtpInfo.dynamicOtpCode
+                            ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 ring-1 ring-emerald-300'
+                            : 'bg-teal-500 hover:bg-teal-400 text-slate-950 hover:ring-1 hover:ring-teal-300'
+                        }`}
+                        title="Click to auto-fill the 6-digit dynamic code"
+                      >
+                        {otpInput === dispatchedOtpInfo.dynamicOtpCode ? (
+                          <>
+                            <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                            <span>✓ Code Filled (Click to Re-Fill)</span>
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                            <span>Auto-Fill Code</span>
+                          </>
+                        )}
+                      </button>
                     </div>
                   </div>
                 )}
@@ -1165,12 +1195,7 @@ export default function App() {
 
                 <div className="flex justify-end gap-2.5 pt-2">
                   <button
-                    onClick={() => {
-                      setActiveApproval(null);
-                      setOtpSuccessReceipt(null);
-                      setDispatchedOtpInfo(null);
-                      setOtpInput('');
-                    }}
+                    onClick={close2FaModal}
                     className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold"
                   >
                     Cancel
