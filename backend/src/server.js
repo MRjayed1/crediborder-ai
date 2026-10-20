@@ -35,8 +35,8 @@ app.use((req, res, next) => {
   next();
 });
 
-// 2. CORS configuration with strict regex allow-list
-const ALLOWED_ORIGIN_REGEX = /^https?:\/\/(localhost(:\d+)?|127\.0\.0\.1(:\d+)?|[a-z0-9-]+\.ngrok-free\.(dev|app))$/i;
+// 2. CORS configuration with strict regex allow-list (including localhost, ngrok, Vercel, and Netlify)
+const ALLOWED_ORIGIN_REGEX = /^https?:\/\/(localhost(:\d+)?|127\.0\.0\.1(:\d+)?|[a-z0-9-]+\.ngrok-free\.(dev|app)|[a-z0-9-]+\.vercel\.app|[a-z0-9-]+\.netlify\.app)$/i;
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin || ALLOWED_ORIGIN_REGEX.test(origin) || (process.env.ALLOWED_ORIGIN && origin === process.env.ALLOWED_ORIGIN)) {
@@ -48,6 +48,14 @@ app.use(cors({
 }));
 
 app.use(express.json({ limit: '1mb' }));
+
+// Route normalizer: Support both /api/path and /path if serverless router or proxy passes rewritten URLs
+app.use((req, res, next) => {
+  if (!req.url.startsWith('/api') && req.url !== '/' && !req.url.startsWith('/?')) {
+    req.url = '/api' + req.url;
+  }
+  next();
+});
 
 // 3. Lightweight in-memory rate limiter (120 req/min per IP)
 const rateLimitMap = new Map();
@@ -242,7 +250,7 @@ app.post('/api/payments/confirm-otp', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 4000;
-if (process.env.NODE_ENV !== 'test') {
+if (process.env.NODE_ENV !== 'test' && !process.env.VERCEL) {
   app.listen(PORT, () => {
     console.log(`[CrediBorder AI Backend] Running on http://localhost:${PORT}`);
   });

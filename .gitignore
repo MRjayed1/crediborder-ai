@@ -19,3 +19,10 @@ frontend/dist/
 npm-debug.log*
 .DS_Store
 Thumbs.db
+
+# Deployment CLI caches
+.vercel/
+.netlify/
+
+.vercel
+.env*

@@ -5,6 +5,8 @@
 **Team Name:** Retro Engineers  
 **Team Members:** Sheikh Jayed Ahmed Noyon (Team Lead, CSE), Fahmiduzzaman (Member, CSE), & Shadman Sakib (Member, EEE)  
 **Institution:** Sylhet Engineering College (SEC), Sylhet, Bangladesh  
+**Live Production URL:** [https://crediborder-ai.vercel.app](https://crediborder-ai.vercel.app)  
+**Live API Health Check:** [https://crediborder-ai.vercel.app/api/health](https://crediborder-ai.vercel.app/api/health)  
 
 ---
 
@@ -34,6 +36,9 @@ When international students from emerging markets (such as **Sylhet, Bangladesh*
 ```text
 CrediBorder-AI-Repo/
 ├── .gitignore                       # Excludes node_modules, .env secrets, and build artifacts
+├── vercel.json                      # Vercel multi-service routing config (Vite frontend + Express API)
+├── netlify.toml                     # Netlify build and SPA redirect configuration
+├── package.json                     # Monorepo root package.json for Vercel & Netlify build orchestration
 ├── database/
 │   └── supabase_schema.sql          # Full PostgreSQL DDL + Aligned Seed Data for Supabase SQL Editor
 ├── backend/
