@@ -9,7 +9,9 @@ import dotenv from 'dotenv';
 import { REGULATORY_CONFIG } from './regulatoryConfig.js';
 import {
   getSessionState,
+  getPublicState,
   resetSessionState,
+  getSandboxInboxForSession,
   calculateUkviTarget,
   calculateCorridorQuotes,
   stageOrExecuteTransfer,
@@ -23,6 +25,7 @@ import {
 dotenv.config();
 
 const app = express();
+app.set('trust proxy', 1);
 
 // 1. Zero-dependency security headers middleware
 app.use((req, res, next) => {
@@ -32,15 +35,14 @@ app.use((req, res, next) => {
   next();
 });
 
-// 2. CORS configuration with regex whitelist for local and ngrok tunnels
-const allowedOriginRegex = /^(https?:\/\/(localhost|127\.0\.0\.1)(:[0-9]+)?|https:\/\/.*\.ngrok-free\.(dev|app))$/;
+// 2. CORS configuration with strict regex allow-list
+const ALLOWED_ORIGIN_REGEX = /^https?:\/\/(localhost(:\d+)?|127\.0\.0\.1(:\d+)?|[a-z0-9-]+\.ngrok-free\.(dev|app))$/i;
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || allowedOriginRegex.test(origin) || (process.env.ALLOWED_ORIGIN && origin === process.env.ALLOWED_ORIGIN)) {
-      callback(null, true);
-    } else {
-      callback(null, true);
+    if (!origin || ALLOWED_ORIGIN_REGEX.test(origin) || (process.env.ALLOWED_ORIGIN && origin === process.env.ALLOWED_ORIGIN)) {
+      return callback(null, true);
     }
+    return callback(new Error('CORS blocked by CrediBorder AI origin policy'));
   },
   credentials: true
 }));
@@ -72,7 +74,7 @@ app.use((req, res, next) => {
 });
 
 // Helper to extract session ID per browser tab or client
-const extractSessionId = (req) => String(req.headers['x-session-id'] || req.query.sessionId || 'default').slice(0, 64);
+const extractSessionId = (req) => String(req.headers['x-session-id'] || req.query.sessionId || req.body?.sessionId || 'default').slice(0, 64);
 
 // ----------------------------------------------------------------------------
 // API ROUTES
@@ -96,19 +98,18 @@ app.get('/api/regulatory-config', (req, res) => {
 
 app.get('/api/state', (req, res) => {
   const sessionId = extractSessionId(req);
-  res.json(getSessionState(sessionId));
+  res.json(getPublicState(sessionId));
 });
 
 app.post('/api/reset', (req, res) => {
   const sessionId = extractSessionId(req);
   const fresh = resetSessionState(sessionId);
-  res.json({ status: 'RESET_COMPLETE', summary: 'Sandbox restored to clean initial state.', state: fresh });
+  res.json({ status: 'RESET_COMPLETE', summary: 'Sandbox restored to clean initial state.', state: getPublicState(sessionId) });
 });
 
 app.get('/api/sandbox/inbox', (req, res) => {
   const sessionId = extractSessionId(req);
-  const state = getSessionState(sessionId);
-  res.json({ inbox: state.sandboxInbox || [] });
+  res.json(getSandboxInboxForSession(sessionId));
 });
 
 app.get('/api/fx/quotes', (req, res) => {

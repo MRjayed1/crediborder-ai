@@ -459,7 +459,24 @@ export default function App() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to dispatch OTP');
-      setDispatchedOtpInfo(data);
+      let code = data.dynamicOtpCode || data.code;
+      if (!code) {
+        try {
+          const inboxRes = await fetchApi('/api/sandbox/inbox');
+          if (inboxRes.ok) {
+            const inboxData = await inboxRes.json();
+            code = inboxData.inbox?.[0]?.dynamicOtpCode || inboxData.inbox?.[0]?.code;
+          }
+        } catch {
+          // Ignore inbox fetch failure
+        }
+      }
+      code = code || String(Math.floor(100000 + Math.random() * 900000));
+      setDispatchedOtpInfo({
+        ...data,
+        dynamicOtpCode: code,
+        code
+      });
       setOtpInput('');
       setLastCompletedAction((prev) => ({ ...prev, autoFilled: false, otpSent: true }));
       triggerVisualFeedback(
@@ -470,14 +487,15 @@ export default function App() {
       );
     } catch {
       let nextCode = String(Math.floor(100000 + Math.random() * 900000));
-      if (dispatchedOtpInfo && nextCode === dispatchedOtpInfo.dynamicOtpCode) {
+      if (dispatchedOtpInfo && (nextCode === dispatchedOtpInfo.dynamicOtpCode || nextCode === dispatchedOtpInfo.code)) {
         nextCode = String(Math.floor(100000 + Math.random() * 900000));
       }
       setDispatchedOtpInfo({
         approvalId: activeApproval.approvalId,
         contactChannel: cleanContact,
         channelType: cleanContact.includes('@') ? 'GMAIL' : 'SMS',
-        dynamicOtpCode: nextCode
+        dynamicOtpCode: nextCode,
+        code: nextCode
       });
       setOtpInput('');
       setLastCompletedAction((prev) => ({ ...prev, autoFilled: false, otpSent: true }));
@@ -496,8 +514,9 @@ export default function App() {
       setOtpError('Please click "Send 2FA Code" first to dispatch a dynamic code to your Phone or Gmail.');
       return;
     }
-    if (otpInput.trim() !== dispatchedOtpInfo.dynamicOtpCode) {
-      setOtpError(`INVALID_OTP: Please enter the exact 6-digit dynamic code (${dispatchedOtpInfo.dynamicOtpCode}) sent to ${dispatchedOtpInfo.contactChannel}.`);
+    const currentCode = dispatchedOtpInfo.dynamicOtpCode || dispatchedOtpInfo.code;
+    if (currentCode && otpInput.trim() !== currentCode) {
+      setOtpError(`INVALID_OTP: Please enter the exact 6-digit dynamic code (${currentCode}) sent to ${dispatchedOtpInfo.contactChannel}.`);
       return;
     }
     setLoading(true);
@@ -1134,8 +1153,10 @@ export default function App() {
                       <div className="text-slate-400 mt-0.5">Subject: <span className="text-slate-200">CrediBorder 2FA OTP Token ({activeApproval.approvalId})</span></div>
                       <div className="p-2.5 mt-2 rounded-lg bg-teal-950/60 border border-teal-500/30 font-mono text-center">
                         <span className="text-slate-400 text-[11px] block mb-0.5">One-Time Dynamic 6-Digit Code:</span>
-                        <span className="text-2xl font-black text-teal-300 tracking-widest">{dispatchedOtpInfo.dynamicOtpCode}</span>
                         <span className="text-[10px] text-slate-400 block mt-0.5">Expires in 10 minutes • Cryptographically Bound to {activeApproval.approvalId}</span>
+                        <div className="text-2xl font-mono text-emerald-400 font-extrabold tracking-widest my-2 select-all">
+                          {dispatchedOtpInfo?.dynamicOtpCode || dispatchedOtpInfo?.code || '------'}
+                        </div>
                       </div>
                     </div>
                     <div className="flex justify-between items-center pt-1">
@@ -1145,25 +1166,26 @@ export default function App() {
                       <button
                         type="button"
                         onClick={() => {
-                          if (dispatchedOtpInfo?.dynamicOtpCode) {
-                            setOtpInput(dispatchedOtpInfo.dynamicOtpCode);
+                          const code = dispatchedOtpInfo?.dynamicOtpCode || dispatchedOtpInfo?.code;
+                          if (code) {
+                            setOtpInput(code);
                             setOtpError(null);
                             triggerVisualFeedback(
                               'autoFilled',
                               'Code Auto-Filled!',
-                              `Entered dynamic code ${dispatchedOtpInfo.dynamicOtpCode}. Click "Verify 2FA & Execute" now!`,
+                              `Entered dynamic code ${code}. Click "Verify 2FA & Execute" now!`,
                               'success'
                             );
                           }
                         }}
                         className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow-sm cursor-pointer select-none ${
-                          otpInput === dispatchedOtpInfo.dynamicOtpCode
+                          otpInput && otpInput === (dispatchedOtpInfo?.dynamicOtpCode || dispatchedOtpInfo?.code)
                             ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 ring-1 ring-emerald-300'
                             : 'bg-teal-500 hover:bg-teal-400 text-slate-950 hover:ring-1 hover:ring-teal-300'
                         }`}
                         title="Click to auto-fill the 6-digit dynamic code"
                       >
-                        {otpInput === dispatchedOtpInfo.dynamicOtpCode ? (
+                        {otpInput && otpInput === (dispatchedOtpInfo?.dynamicOtpCode || dispatchedOtpInfo?.code) ? (
                           <>
                             <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
                             <span>✓ Code Filled (Click to Re-Fill)</span>
@@ -1171,7 +1193,7 @@ export default function App() {
                         ) : (
                           <>
                             <Sparkles className="w-3.5 h-3.5 shrink-0" />
-                            <span>Auto-Fill Code</span>
+                            <span>✨ Auto-Fill Code</span>
                           </>
                         )}
                       </button>
